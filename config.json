@@ -1,0 +1,8 @@
+{
+  "source_language": "de",
+  "target_languages": ["zh-CN", "en"],
+  "hotkey": "ctrl+alt+z",
+  "tooltip_duration_ms": 4000,
+  "max_chars": 1000,
+  "log_file": "log/translations.log"
+}

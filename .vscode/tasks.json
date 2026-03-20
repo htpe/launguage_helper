@@ -1,0 +1,13 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run Language Helper",
+			"type": "shell",
+			"command": "${workspaceFolder}/.venv/Scripts/python.exe main.py",
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		}
+	]
+}
