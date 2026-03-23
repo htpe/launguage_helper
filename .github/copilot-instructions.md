@@ -1,7 +1,7 @@
 # Language Helper - Copilot Instructions
 
 ## Project Overview
-A Windows 11 system tray application that monitors clipboard text selections and shows a floating translation tooltip near the cursor. Languages are configured via `config.json`.
+A Windows + macOS system tray application that monitors clipboard text selections and shows a floating translation tooltip near the cursor. Languages are configured via `config.json`.
 
 ## Architecture
 - `main.py` — Entry point, launches tray + clipboard monitor
@@ -17,9 +17,9 @@ A Windows 11 system tray application that monitors clipboard text selections and
 - `pyperclip` for clipboard access
 - `pystray` + `Pillow` for system tray icon
 - `tkinter` for floating tooltip UI (built-in)
-- `keyboard` for global hotkey support (Ctrl+Alt+T toggle)
+- `keyboard` for global hotkey support on Windows (configurable)
 - `pynput` for global mouse listener (left-button release triggers translation)
-- `pywin32` (`win32api`) for cursor position (with `ctypes` fallback)
+- No platform-specific cursor dependency (cursor position via `pynput`)
 
 ## Config
 Edit `config.json` to change:
@@ -30,5 +30,5 @@ Edit `config.json` to change:
 
 ## Development Notes
 - Run `pip install -r requirements.txt` before starting
-- Windows 11 only (uses win32 cursor positioning)
+- Windows + macOS
 - The app runs as a background system tray process

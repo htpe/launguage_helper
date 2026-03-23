@@ -1,10 +1,13 @@
 # Language Helper
 
-A Windows 11 system-tray tool that translates any selected text on-screen with a single hotkey press.
+A system-tray tool for Windows and macOS that translates selected text on-screen with a single hotkey toggle.
 
 ## How it works
 
-The hotkey (**Ctrl+Alt+T** by default) acts as a **global toggle**:
+The hotkey (configured via `config.json`, default is `ctrl+shift+t` if not set) acts as a **global toggle**.
+
+- Windows/Linux: use `ctrl+...`
+- macOS: use `cmd+...` (example: `cmd+shift+t`)
 
 | Press | Effect |
 |---|---|
@@ -16,11 +19,13 @@ While watch mode is **ON**, simply **select any text with the mouse**. The momen
 You can also toggle via the tray icon right-click menu.
 
 ### Typical workflow
-1. Press **Ctrl+Alt+T** to turn on translation.
+1. Press your configured hotkey to turn on translation.
 2. Select any text with the mouse — tooltip appears instantly.
-3. Press **Ctrl+Alt+T** again when done.
+3. Press the hotkey again when done.
 
 ## Quick start
+
+### Windows (PowerShell)
 
 ```powershell
 # 1. Create a virtual environment (recommended)
@@ -34,8 +39,32 @@ pip install -r requirements.txt
 python main.py
 ```
 
-> **Note:** The app requires Python 3.10+ and runs on Windows only.  
-> Translation uses Google Translate's public endpoint via the standard-library `urllib` — no extra packages or API keys needed.
+### macOS (zsh/bash)
+
+```bash
+# 1. Create a virtual environment (recommended)
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 2. Install dependencies
+python -m pip install -r requirements.txt
+
+# 3. Run
+python main.py
+```
+
+> **Note:** Requires Python 3.10+. Translation uses Google Translate's public endpoint via the standard-library `urllib` — no API keys needed.
+
+### macOS permissions
+
+On macOS, automatic “copy selected text” and global hotkeys require OS permissions.
+
+Grant these to the app you run it from (Terminal / iTerm / VS Code / the packaged app):
+
+- **Privacy & Security → Input Monitoring**
+- **Privacy & Security → Accessibility**
+
+If permissions are missing, selecting text may not copy to the clipboard, and no tooltip will appear.
 
 ## Configuration — `config.json`
 
@@ -46,6 +75,7 @@ python main.py
 | `hotkey` | string | `"ctrl+alt+t"` | Global hotkey that toggles watch mode on/off. |
 | `tooltip_duration_ms` | int | `4000` | Milliseconds the tooltip stays visible. |
 | `max_chars` | int | `500` | Maximum characters of selected text to translate. |
+| `exclusive_source_language` | bool | `false` | If `true`, only translate when the selected text is detected to be `source_language` (ignored when `source_language` is `"auto"`). |
 | `log_file` | string | `"translations.log"` | Path to the log file. Relative paths are resolved from the project folder. Set to `""` to disable logging. |
 
 ### Example — translate English → German & Japanese
@@ -87,7 +117,7 @@ launguage_helper/
 ├── requirements.txt
 ├── src/
 │   ├── config.py           # Config loader
-│   ├── translator.py       # Translation (deep-translator / Google)
+│   ├── translator.py       # Translation (Google public endpoint via urllib)
 │   ├── clipboard_monitor.py# Hotkey listener + clipboard handling
 │   ├── tooltip.py          # Floating Tkinter overlay
 │   └── tray.py             # System tray icon (pystray)

@@ -1,7 +1,7 @@
 """
 Clipboard monitor — Windows & macOS compatible.
 
-The global hotkey (default Ctrl+Alt+T) TOGGLES translation on / off:
+The global hotkey (configured via config.json) TOGGLES translation on / off:
   • First press  → enable watch mode  (tray icon turns green)
   • Second press → disable watch mode  (tray icon turns purple)
 
@@ -76,6 +76,27 @@ _SPECIAL_KEYS = {
 _FKEY_RE = re.compile(r"^f\d+$")
 
 
+def _normalize_lang(lang: str | None) -> str:
+    return (lang or "").strip().lower().replace("_", "-")
+
+
+def _lang_matches(detected: str | None, configured: str | None) -> bool:
+    """Return True if *detected* language should be treated as *configured*."""
+    det = _normalize_lang(detected)
+    conf = _normalize_lang(configured)
+
+    if not conf or conf == "auto":
+        return True
+    if not det:
+        return False
+
+    # If the user specified a region/script variant, require an exact match.
+    # Otherwise compare primary subtags (e.g. 'de', 'en', 'zh').
+    if "-" in conf:
+        return det == conf
+    return det.split("-")[0] == conf.split("-")[0]
+
+
 def _to_pynput_hotkey(hotkey_str: str) -> str:
     """Convert 'ctrl+alt+t' style string to pynput '<ctrl>+<alt>+t' format."""
     parts = hotkey_str.lower().split("+")
@@ -135,6 +156,7 @@ class ClipboardMonitor:
         self._hotkey_watchdog_stop = threading.Event()
         self._hotkey_watchdog_thread: threading.Thread | None = None
         self._last_hotkey_ts = 0.0
+        self._suppress_hotkey_until = 0.0
         self._on_toggle_callback = None
         self._translate_lock = threading.Lock()
         self._pending_text: str | None = None
@@ -157,7 +179,7 @@ class ClipboardMonitor:
         return str(self._cfg.get("hotkey", "ctrl+alt+t"))
 
     def start(self) -> None:
-        """Register the global hotkey and immediately enable watch mode."""
+        """Register the global hotkey (watch mode starts OFF)."""
         if self._running:
             return
 
@@ -169,8 +191,7 @@ class ClipboardMonitor:
 
         if self._hotkey_str:
             print(f"[monitor] Hotkey '{self._hotkey_str}' registered — toggles translation on/off.")
-        # Start active so the user can translate immediately without pressing the hotkey
-        self.toggle()
+        # Watch mode starts OFF; user enables via hotkey or tray menu.
 
     def stop(self) -> None:
         """Disable watch mode and clean up all listeners."""
@@ -218,8 +239,8 @@ class ClipboardMonitor:
         self.stop()
         self._cfg = cfg_mod.load()
         self.start()          # sets self._running = True internally
-        # start() always enables watch mode; only toggle if we were previously inactive.
-        if not was_active:
+        # Preserve previous watch-mode state after reload.
+        if was_active:
             self.toggle(source="reload")
         print(f"[monitor] Config reloaded. targets={self._cfg.get('target_languages')}")
 
@@ -230,6 +251,8 @@ class ClipboardMonitor:
     def _on_hotkey(self) -> None:
         # Guard against key-repeat, unlock floods, or duplicate hook callbacks.
         now = time.monotonic()
+        if now < self._suppress_hotkey_until:
+            return
         if now - self._last_hotkey_ts < 0.5:
             return
         self._last_hotkey_ts = now
@@ -258,25 +281,15 @@ class ClipboardMonitor:
                 self._hotkey_handle = None
 
             try:
-                # The `keyboard` library may map a letter to multiple scan codes
-                # (e.g. on systems with multiple layouts), which can make a hotkey
-                # appear like it triggers on both 'y' and 'z'. To avoid that, we
-                # parse once and restrict the last key to a single scan code.
-                parsed = _keyboard_win.parse_hotkey(hotkey)
-                if parsed and len(parsed) == 1 and parsed[0]:
-                    step = list(parsed[0])
-                    last = step[-1]
-                    if isinstance(last, tuple) and len(last) > 1:
-                        step[-1] = (last[0],)
-                    parsed = (tuple(step),)
-
                 self._hotkey_handle = _keyboard_win.add_hotkey(
-                    parsed,
+                    hotkey,
                     self._on_hotkey,
                     suppress=False,
-                    trigger_on_release=True,
+                    trigger_on_release=False,
                 )
                 self._hotkey_str = hotkey
+                # Ignore any in-flight key events right after (re)registration.
+                self._suppress_hotkey_until = time.monotonic() + 0.5
             except Exception as exc:  # noqa: BLE001
                 self._hotkey_handle = None
                 self._hotkey_str = ""
@@ -341,18 +354,36 @@ class ClipboardMonitor:
             return
         if button != pynput_mouse.Button.left or pressed:
             return
-        threading.Thread(target=self._capture_selection, daemon=True).start()
+        # Capture the release coordinates so the tooltip can be positioned even
+        # if the cursor moves while translation/network calls are in flight.
+        threading.Thread(target=self._capture_selection, args=(int(x), int(y)), daemon=True).start()
 
-    def _capture_selection(self) -> None:
-        """Wait briefly, copy selected text, translate if something changed."""
+    def _capture_selection(self, x: int, y: int) -> None:
+        """Wait briefly, copy selected text, translate if the clipboard changed."""
         time.sleep(0.18)
 
+        try:
+            before = pyperclip.paste() or ""
+        except Exception:
+            before = ""
+
+        # We synthesize Ctrl+C/Cmd+C to capture the selection. On Windows, the
+        # global hotkey backend can occasionally mis-detect synthetic key events
+        # as the configured hotkey. Suppress hotkey callbacks during this window.
+        self._suppress_hotkey_until = time.monotonic() + 0.9
         _inject_copy()
         time.sleep(0.15)
+        self._suppress_hotkey_until = max(self._suppress_hotkey_until, time.monotonic() + 0.2)
 
         try:
             after = pyperclip.paste() or ""
         except Exception:
+            return
+
+        # If the clipboard didn't change, we likely clicked without selecting
+        # text, or the OS blocked synthetic copy (common on macOS without
+        # Accessibility/Input Monitoring permission). In that case, do nothing.
+        if after == before:
             return
 
         text = after.strip()
@@ -360,7 +391,7 @@ class ClipboardMonitor:
             return
 
         self._last_text = after
-        threading.Thread(target=self._show_translation, args=(text,), daemon=True).start()
+        threading.Thread(target=self._show_translation, args=(text, x, y), daemon=True).start()
 
     def _get_cursor_pos(self) -> tuple[int, int]:
         """Get current cursor position using pynput (cross-platform)."""
@@ -370,7 +401,7 @@ class ClipboardMonitor:
         except Exception:
             return 100, 100
 
-    def _show_translation(self, text: str) -> None:
+    def _show_translation(self, text: str, x: int | None = None, y: int | None = None) -> None:
         """Translate *text*, display the tooltip, and append to the log file."""
         if not self._translate_lock.acquire(blocking=False):
             # A tooltip is currently being shown (Tk mainloop blocks). Queue the
@@ -400,6 +431,14 @@ class ClipboardMonitor:
 
             source = self._cfg.get("source_language", "auto")
             targets = self._cfg.get("target_languages", ["fr"])
+
+            # Optional: translate ONLY when the selected text is detected to be
+            # the configured source language.
+            if self._cfg.get("exclusive_source_language") and str(source).lower() != "auto":
+                detected = translator.detect_language(text)
+                if detected and not _lang_matches(detected, str(source)):
+                    return
+
             translations = translator.translate(text, source, targets)
 
             is_single_word = len(text.split()) == 1
@@ -422,7 +461,8 @@ class ClipboardMonitor:
                 
                 translation_log.log(text, source, translations, log_path=log_path, examples=examples)
 
-            x, y = self._get_cursor_pos()
+            if x is None or y is None:
+                x, y = self._get_cursor_pos()
             duration_ms = self._cfg.get("tooltip_duration_ms", 4000)
             tooltip.show_tooltip(translations, x, y, duration_ms, examples=examples)
         finally:

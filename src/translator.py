@@ -99,6 +99,62 @@ def _google_translate(text: str, source: str, target: str) -> str:
     return translated
 
 
+def detect_language(text: str) -> str | None:
+    """Best-effort language detection for *text*.
+
+    Uses Google Translate's public endpoint with `sl=auto` and returns the
+    detected source language code when available (e.g. 'en', 'de', 'zh-CN').
+    Returns None if detection cannot be determined.
+    """
+    text = (text or "").strip()
+    if not text:
+        return None
+
+    # Keep detection fast and avoid huge URLs.
+    text = text[:200]
+
+    url = _GOOGLE_URL.format(
+        src="auto",
+        tgt="en",
+        q=urllib.parse.quote(text),
+    )
+
+    try:
+        data = _fetch_json(url)
+    except Exception:
+        return None
+
+    # Most common shape: data[2] is detected language when sl=auto.
+    try:
+        if isinstance(data, list) and len(data) > 2 and isinstance(data[2], str) and data[2].strip():
+            return data[2].strip()
+    except Exception:
+        pass
+
+    # Fallback: sometimes language info is nested deeper.
+    try:
+        # Try to find the first string that looks like a language tag.
+        # We accept basic tags like 'en' or BCP-47 style like 'zh-CN'.
+        def _walk(o):
+            if isinstance(o, str):
+                yield o
+            elif isinstance(o, list):
+                for item in o:
+                    yield from _walk(item)
+            elif isinstance(o, dict):
+                for v in o.values():
+                    yield from _walk(v)
+
+        for s in _walk(data):
+            s = s.strip()
+            if _re.match(r"^[a-z]{2,3}(-[a-z0-9]{2,8})*$", s, flags=_re.IGNORECASE):
+                return s
+    except Exception:
+        pass
+
+    return None
+
+
 def _score_sentence(s: str) -> float:
     """
     Return a quality score for an example sentence (higher = better).

@@ -11,6 +11,7 @@ _DEFAULTS = {
     "hotkey": "ctrl+shift+t",
     "tooltip_duration_ms": 4000,
     "max_chars": 500,
+    "exclusive_source_language": False,
 }
 
 

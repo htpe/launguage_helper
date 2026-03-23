@@ -6,8 +6,8 @@ the mouse cursor with the translated text.  The window auto-closes after
 *duration_ms* milliseconds.
 """
 
+import sys
 import tkinter as tk
-from typing import Callable
 
 
 class Tooltip:
@@ -44,11 +44,25 @@ class Tooltip:
         frame = tk.Frame(root, bg="#1e1e2e", padx=10, pady=8)
         frame.pack()
 
+        if sys.platform == "win32":
+            font_small_bold = ("Segoe UI", 8, "bold")
+            font_body = ("Segoe UI", 10)
+            font_examples_header = ("Segoe UI", 7, "bold")
+            font_example = ("Segoe UI", 9, "italic")
+            font_close = ("Segoe UI", 8)
+        else:
+            # Use Tk defaults on macOS/Linux to avoid missing-font fallbacks.
+            font_small_bold = ("TkDefaultFont", 9, "bold")
+            font_body = ("TkDefaultFont", 11)
+            font_examples_header = ("TkDefaultFont", 8, "bold")
+            font_example = ("TkDefaultFont", 10, "italic")
+            font_close = ("TkDefaultFont", 9)
+
         for lang, translated in self._translations.items():
             lang_label = tk.Label(
                 frame,
                 text=f"[{lang.upper()}]",
-                font=("Segoe UI", 8, "bold"),
+                font=font_small_bold,
                 bg="#1e1e2e",
                 fg="#cba6f7",
                 anchor="w",
@@ -58,7 +72,7 @@ class Tooltip:
             text_label = tk.Label(
                 frame,
                 text=translated,
-                font=("Segoe UI", 10),
+                font=font_body,
                 bg="#1e1e2e",
                 fg="#cdd6f4",
                 wraplength=380,
@@ -75,7 +89,7 @@ class Tooltip:
             ex_header = tk.Label(
                 frame,
                 text="EXAMPLES",
-                font=("Segoe UI", 7, "bold"),
+                font=font_examples_header,
                 bg="#1e1e2e",
                 fg="#a6adc8",
                 anchor="w",
@@ -86,7 +100,7 @@ class Tooltip:
                 ex_label = tk.Label(
                     frame,
                     text=f"{i}. {sentence}",
-                    font=("Segoe UI", 9, "italic"),
+                    font=font_example,
                     bg="#1e1e2e",
                     fg="#a6e3a1",
                     wraplength=380,
@@ -98,7 +112,7 @@ class Tooltip:
         close_btn = tk.Label(
             frame,
             text="✕",
-            font=("Segoe UI", 8),
+            font=font_close,
             bg="#1e1e2e",
             fg="#6c7086",
             cursor="hand2",

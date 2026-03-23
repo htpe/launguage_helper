@@ -1,5 +1,6 @@
 {
   "source_language": "de",
+  "exclusive_source_language": true,
   "target_languages": ["zh-CN", "en"],
   "hotkey": "ctrl+alt+z",
   "tooltip_duration_ms": 4000,
