@@ -75,7 +75,7 @@ If permissions are missing, selecting text may not copy to the clipboard, and no
 | `hotkey` | string | `"ctrl+alt+t"` | Global hotkey that toggles watch mode on/off. |
 | `tooltip_duration_ms` | int | `4000` | Milliseconds the tooltip stays visible. |
 | `max_chars` | int | `500` | Maximum characters of selected text to translate. |
-| `exclusive_source_language` | bool | `false` | If `true`, only translate when the selected text is detected to be `source_language` (ignored when `source_language` is `"auto"`). |
+| `exclusive_source_language` | bool | `false` | If `true` and `source_language` is not `"auto"`, the app checks the detected language. If it doesn't match, it **first tries** translating as `source_language`; if that looks unhelpful it tries `"auto"` and only falls back when `"auto"` produces a more meaningful translation. When it falls back to `"auto"`, the event is **not written to the log**. |
 | `log_file` | string | `"translations.log"` | Path to the log file. Relative paths are resolved from the project folder. Set to `""` to disable logging. |
 
 ### Example — translate English → German & Japanese

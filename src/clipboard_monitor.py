@@ -27,6 +27,7 @@ import re
 import sys
 import threading
 import time
+import difflib
 from collections import deque
 
 import pyperclip
@@ -95,6 +96,45 @@ def _lang_matches(detected: str | None, configured: str | None) -> bool:
     if "-" in conf:
         return det == conf
     return det.split("-")[0] == conf.split("-")[0]
+
+
+def _normalize_for_similarity(s: str) -> str:
+    s = (s or "").strip().lower()
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+
+def _translations_look_meaningful(original: str, translations: dict[str, str]) -> bool:
+    """Heuristic: return True if at least one translation looks non-trivial.
+
+    We treat a translation as *not meaningful* when it is an error, empty, or
+    near-identical to the input (common when the wrong source language was
+    forced).
+    """
+    orig_norm = _normalize_for_similarity(original)
+    if not orig_norm:
+        return False
+
+    for translated in (translations or {}).values():
+        t = (translated or "").strip()
+        if not t:
+            continue
+        if t.startswith("[Error:"):
+            continue
+
+        t_norm = _normalize_for_similarity(t)
+        if not t_norm:
+            continue
+
+        if t_norm == orig_norm:
+            continue
+
+        # If the strings are very similar, it's likely a non-translation.
+        ratio = difflib.SequenceMatcher(a=orig_norm, b=t_norm).ratio()
+        if ratio < 0.92:
+            return True
+
+    return False
 
 
 def _to_pynput_hotkey(hotkey_str: str) -> str:
@@ -429,23 +469,52 @@ class ClipboardMonitor:
                 # Never let de-dupe logic break translation.
                 should_log = True
 
-            source = self._cfg.get("source_language", "auto")
+            configured_source = self._cfg.get("source_language", "auto")
             targets = self._cfg.get("target_languages", ["fr"])
 
-            # Optional: translate ONLY when the selected text is detected to be
-            # the configured source language.
-            if self._cfg.get("exclusive_source_language") and str(source).lower() != "auto":
-                detected = translator.detect_language(text)
-                if detected and not _lang_matches(detected, str(source)):
-                    return
+            source_for_translation = str(configured_source)
+            skip_log_due_to_mismatch = False
 
-            translations = translator.translate(text, source, targets)
+            # If the user wants to restrict translations to a specific source
+            # language, we still translate on mismatches but fall back to auto-
+            # detection (instead of skipping translation entirely).
+            translations: dict[str, str] | None = None
+
+            if self._cfg.get("exclusive_source_language") and str(configured_source).lower() != "auto":
+                detected = translator.detect_language(text)
+                if detected and not _lang_matches(detected, str(configured_source)):
+                    # First try treating the selection as the configured source language.
+                    tentative = translator.translate(text, str(configured_source), targets)
+                    if _translations_look_meaningful(text, tentative):
+                        source_for_translation = str(configured_source)
+                        translations = tentative
+                    else:
+                        # The "forced" translation looks unhelpful (often near-identical).
+                        # This can happen both when the detected mismatch is real *and* when
+                        # the word is shared/borrowed across languages. To avoid false
+                        # fallbacks, only switch to auto when auto-detection yields a clearly
+                        # more meaningful translation.
+                        auto_try = translator.translate(text, "auto", targets)
+                        if _translations_look_meaningful(text, auto_try):
+                            source_for_translation = "auto"
+                            translations = auto_try
+                            # Mismatch seems real → don't write this event to the log.
+                            skip_log_due_to_mismatch = True
+                        else:
+                            # Still ambiguous; keep the configured-source result and log it.
+                            source_for_translation = str(configured_source)
+                            translations = tentative
+                else:
+                    source_for_translation = str(configured_source)
+
+            if translations is None:
+                translations = translator.translate(text, str(source_for_translation), targets)
 
             is_single_word = len(text.split()) == 1
-            examples = translator.get_examples(text, source) if is_single_word else []
+            examples = translator.get_examples(text, str(source_for_translation)) if is_single_word else []
 
             log_cfg = self._cfg.get("log_file", "log/translations.log")
-            if log_cfg and should_log:
+            if log_cfg and should_log and not skip_log_due_to_mismatch:
                 # Determine base directory (executable dir when frozen, project root otherwise)
                 if getattr(sys, 'frozen', False):
                     base_dir = os.path.dirname(sys.executable)
@@ -459,7 +528,7 @@ class ClipboardMonitor:
                 if log_dir and not os.path.exists(log_dir):
                     os.makedirs(log_dir, exist_ok=True)
                 
-                translation_log.log(text, source, translations, log_path=log_path, examples=examples)
+                translation_log.log(text, str(source_for_translation), translations, log_path=log_path, examples=examples)
 
             if x is None or y is None:
                 x, y = self._get_cursor_pos()
