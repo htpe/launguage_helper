@@ -8,13 +8,21 @@ and launches the system tray icon on the main thread.
 import ctypes
 import os
 import sys
-
-from src.clipboard_monitor import ClipboardMonitor
-from src.tray import TrayApp
 from src import single_instance
 
 
 def main() -> None:
+    if sys.platform != "win32":
+        # The app is built for Windows (pystray + win32 clipboard/mouse APIs).
+        # On macOS pystray may hit unrecognized selector errors like:
+        #   -[NSApplication macOSVersion]: unrecognized selector
+        print("[main] Unsupported platform: Language Helper is Windows-only.")
+        return
+
+    # Import Windows-specific modules lazily to avoid macOS import crash paths.
+    from src.clipboard_monitor import ClipboardMonitor
+    from src.tray import TrayApp
+
     instance_lock = single_instance.acquire("language_helper")
     if instance_lock is None:
         print("[main] Language Helper is already running.")
