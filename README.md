@@ -4,6 +4,8 @@ A system-tray tool for Windows and macOS that translates selected text on-screen
 
 ## How it works
 
+Auto-translation starts **enabled by default**.
+
 The hotkey (configured via `config.json`, default is `ctrl+shift+t` if not set) acts as a **global toggle**.
 
 - Windows/Linux: use `ctrl+...`
@@ -11,17 +13,17 @@ The hotkey (configured via `config.json`, default is `ctrl+shift+t` if not set) 
 
 | Press | Effect |
 |---|---|
-| 1st press | **Enable** watch mode — tray icon turns green |
-| 2nd press | **Disable** watch mode — tray icon turns purple |
+| Any press | Toggle watch mode ON/OFF (green when ON, purple when OFF) |
 
-While watch mode is **ON**, simply **select any text with the mouse**. The moment you release the mouse button the text is automatically copied, translated, and a floating tooltip appears near your cursor. Every translation is also written to the log file.
+While watch mode is **ON**, simply **select any text with the mouse** (drag to highlight, or double/triple-click to select a word/paragraph). When you finish the selection, the text is automatically copied, translated, and a floating tooltip appears near your cursor. Every translation is also written to the log file.
+
+To reduce accidental triggers (for example when clicking links), URL-only clipboard contents are ignored.
 
 You can also toggle via the tray icon right-click menu.
 
 ### Typical workflow
-1. Press your configured hotkey to turn on translation.
-2. Select any text with the mouse — tooltip appears instantly.
-3. Press the hotkey again when done.
+1. Select any text with the mouse — tooltip appears instantly.
+2. Press your configured hotkey (or use the tray menu) to toggle ON/OFF.
 
 ## Quick start
 

@@ -40,6 +40,7 @@ class TrayApp:
 
     def run(self) -> None:
         """Build the tray icon and start its event loop (blocking)."""
+        active = self._monitor.is_active
         menu = pystray.Menu(
             pystray.MenuItem("Language Helper", None, enabled=False),
             pystray.Menu.SEPARATOR,
@@ -54,8 +55,8 @@ class TrayApp:
         )
         self._icon = pystray.Icon(
             "language_helper",
-            _create_icon_image(False),
-            "Language Helper — OFF",
+            _create_icon_image(active),
+            f"Language Helper — {'ON' if active else 'OFF'}",
             menu,
         )
         self._icon.run()

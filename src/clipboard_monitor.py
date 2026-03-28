@@ -1,9 +1,10 @@
 """
 Clipboard monitor — Windows & macOS compatible.
 
-The global hotkey (configured via config.json) TOGGLES translation on / off:
-  • First press  → enable watch mode  (tray icon turns green)
-  • Second press → disable watch mode  (tray icon turns purple)
+Auto-translation starts ENABLED by default.
+
+The global hotkey (configured via config.json) TOGGLES translation on / off
+(tray icon is green when active, purple when inactive).
 
 While watch mode is ON:
   A pynput mouse listener watches for left-button releases.
@@ -13,9 +14,8 @@ While watch mode is ON:
   Every translation is also appended to the log file.
 
 The user workflow:
-  1. Press the hotkey to enable (or use the tray menu toggle).
-  2. Select any text with the mouse — tooltip appears automatically.
-  3. Press the hotkey again to disable.
+    1. Select any text with the mouse — tooltip appears automatically.
+    2. Press the hotkey (or use the tray menu) to toggle ON/OFF.
 
 Platform notes:
   - Windows : pywin32 not required; pynput handles everything.
@@ -75,6 +75,40 @@ _SPECIAL_KEYS = {
     "home", "end", "pageup", "pagedown", "up", "down", "left", "right",
 }
 _FKEY_RE = re.compile(r"^f\d+$")
+
+# ---------------------------------------------------------------------------
+# Selection heuristics
+#
+# The app triggers translation by synthesizing Ctrl/Cmd+C on mouse release.
+# Some apps/websites can change the clipboard on a simple click (e.g. copying
+# a link URL or focused element), which can cause false translations.
+#
+# We therefore only attempt capture when the user likely selected text:
+#   - drag selection (mouse moved between press and release), OR
+#   - double/triple click selection (word/paragraph).
+#
+# Additionally, we ignore URL-shaped clipboard contents.
+# ---------------------------------------------------------------------------
+_DRAG_MIN_DISTANCE_PX = 6
+_MULTI_CLICK_MAX_INTERVAL_S = 0.45
+_MULTI_CLICK_MAX_MOVE_PX = 10
+_URL_RE = re.compile(r"^(?:https?://|www\.)\S+$", flags=re.IGNORECASE)
+
+
+def _dist_px(a: tuple[int, int], b: tuple[int, int]) -> float:
+    dx = float(a[0] - b[0])
+    dy = float(a[1] - b[1])
+    return (dx * dx + dy * dy) ** 0.5
+
+
+def _looks_like_url(text: str) -> bool:
+    s = (text or "").strip()
+    if not s:
+        return False
+    # Multi-line selections are almost certainly not a URL.
+    if "\n" in s or "\r" in s:
+        return False
+    return bool(_URL_RE.match(s))
 
 
 def _normalize_lang(lang: str | None) -> str:
@@ -202,6 +236,14 @@ class ClipboardMonitor:
         self._pending_text: str | None = None
         self._pending_lock = threading.Lock()
 
+        # Mouse-selection heuristics
+        self._left_press_pos: tuple[int, int] | None = None
+        self._left_press_ts: float = 0.0
+        self._last_left_release_pos: tuple[int, int] | None = None
+        self._last_left_release_ts: float = 0.0
+        self._left_click_count: int = 0
+        self._multi_click_token: int = 0
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -218,8 +260,8 @@ class ClipboardMonitor:
         """The configured hotkey string (e.g. 'ctrl+alt+z')."""
         return str(self._cfg.get("hotkey", "ctrl+alt+t"))
 
-    def start(self) -> None:
-        """Register the global hotkey (watch mode starts OFF)."""
+    def start(self, start_active: bool = True) -> None:
+        """Register the global hotkey and (optionally) enable watch mode."""
         if self._running:
             return
 
@@ -231,7 +273,10 @@ class ClipboardMonitor:
 
         if self._hotkey_str:
             print(f"[monitor] Hotkey '{self._hotkey_str}' registered — toggles translation on/off.")
-        # Watch mode starts OFF; user enables via hotkey or tray menu.
+
+        # Default behavior: start with auto-translation enabled.
+        if start_active and not self._active:
+            self.toggle(source="startup")
 
     def stop(self) -> None:
         """Disable watch mode and clean up all listeners."""
@@ -278,10 +323,8 @@ class ClipboardMonitor:
         was_active = self._active
         self.stop()
         self._cfg = cfg_mod.load()
-        self.start()          # sets self._running = True internally
         # Preserve previous watch-mode state after reload.
-        if was_active:
-            self.toggle(source="reload")
+        self.start(start_active=was_active)  # sets self._running = True internally
         print(f"[monitor] Config reloaded. targets={self._cfg.get('target_languages')}")
 
     # ------------------------------------------------------------------
@@ -393,10 +436,58 @@ class ClipboardMonitor:
         if not self._active:
             return
         if button != pynput_mouse.Button.left or pressed:
+            # Track press position for drag detection.
+            if button == pynput_mouse.Button.left and pressed:
+                self._left_press_pos = (int(x), int(y))
+                self._left_press_ts = time.monotonic()
             return
-        # Capture the release coordinates so the tooltip can be positioned even
-        # if the cursor moves while translation/network calls are in flight.
-        threading.Thread(target=self._capture_selection, args=(int(x), int(y)), daemon=True).start()
+
+        release_pos = (int(x), int(y))
+        now = time.monotonic()
+
+        # Detect drag selection.
+        dragged = False
+        if self._left_press_pos is not None:
+            try:
+                dragged = _dist_px(self._left_press_pos, release_pos) >= _DRAG_MIN_DISTANCE_PX
+            except Exception:
+                dragged = False
+        self._left_press_pos = None
+
+        # Count consecutive clicks for double/triple-click selection.
+        if (
+            self._last_left_release_pos is not None
+            and (now - self._last_left_release_ts) <= _MULTI_CLICK_MAX_INTERVAL_S
+            and _dist_px(self._last_left_release_pos, release_pos) <= _MULTI_CLICK_MAX_MOVE_PX
+        ):
+            self._left_click_count += 1
+        else:
+            self._left_click_count = 1
+        self._last_left_release_pos = release_pos
+        self._last_left_release_ts = now
+
+        # Only capture when it likely represents a text selection.
+        if dragged:
+            # Capture the release coordinates so the tooltip can be positioned even
+            # if the cursor moves while translation/network calls are in flight.
+            threading.Thread(target=self._capture_selection, args=(release_pos[0], release_pos[1]), daemon=True).start()
+            return
+
+        # Double/triple click selection: debounce so a triple-click only triggers once.
+        if self._left_click_count >= 2:
+            self._multi_click_token += 1
+            token = self._multi_click_token
+
+            def _debounced() -> None:
+                # Only run if no newer click arrived.
+                if token != self._multi_click_token:
+                    return
+                # Ensure we are still active and the sequence is still multi-click.
+                if not self._active or self._left_click_count < 2:
+                    return
+                threading.Thread(target=self._capture_selection, args=(release_pos[0], release_pos[1]), daemon=True).start()
+
+            threading.Timer(_MULTI_CLICK_MAX_INTERVAL_S, _debounced).start()
 
     def _capture_selection(self, x: int, y: int) -> None:
         """Wait briefly, copy selected text, translate if the clipboard changed."""
@@ -428,6 +519,10 @@ class ClipboardMonitor:
 
         text = after.strip()
         if not text:
+            return
+
+        # Avoid translating URL-only clipboard results (common when clicking links).
+        if _looks_like_url(text):
             return
 
         self._last_text = after
@@ -522,13 +617,19 @@ class ClipboardMonitor:
                     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
                 
                 log_path = log_cfg if os.path.isabs(log_cfg) else os.path.join(base_dir, log_cfg)
+
+                # Also de-dupe against the last N entries already persisted in
+                # the log file (useful across restarts).
+                if translation_log.is_recent_duplicate(text, log_path=log_path, max_entries=10):
+                    should_log = False
                 
-                # Create log directory if it doesn't exist
-                log_dir = os.path.dirname(log_path)
-                if log_dir and not os.path.exists(log_dir):
-                    os.makedirs(log_dir, exist_ok=True)
-                
-                translation_log.log(text, str(source_for_translation), translations, log_path=log_path, examples=examples)
+                if should_log:
+                    # Create log directory if it doesn't exist
+                    log_dir = os.path.dirname(log_path)
+                    if log_dir and not os.path.exists(log_dir):
+                        os.makedirs(log_dir, exist_ok=True)
+
+                    translation_log.log(text, str(source_for_translation), translations, log_path=log_path, examples=examples)
 
             if x is None or y is None:
                 x, y = self._get_cursor_pos()

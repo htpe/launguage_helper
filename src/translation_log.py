@@ -19,6 +19,73 @@ _DEFAULT_PATH = os.path.join(
 )
 
 
+def _read_tail_text(log_path: str, max_bytes: int) -> str:
+    if max_bytes <= 0:
+        return ""
+    try:
+        with open(log_path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            start = max(0, size - max_bytes)
+            f.seek(start)
+            data = f.read()
+        return data.decode("utf-8", errors="ignore")
+    except FileNotFoundError:
+        return ""
+    except Exception:
+        return ""
+
+
+def recent_originals(log_path: str, max_entries: int = 10, max_bytes: int = 256_000) -> list[str]:
+    """Return up to *max_entries* most recent Original strings in the log.
+
+    Best-effort parser for the plain-text log format written by `log()`.
+    Reads only the last *max_bytes* bytes for efficiency.
+    """
+    text = _read_tail_text(log_path, max_bytes=max_bytes)
+    if not text:
+        return []
+
+    lines = text.splitlines()
+    originals: list[str] = []
+    prefix = "  Original : "
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith(prefix):
+            original = line[len(prefix):]
+            j = i + 1
+            # Handle multi-line originals: continuation lines appear as raw
+            # lines until the next indented field (translations/examples) or
+            # a blank separator.
+            while j < len(lines):
+                nxt = lines[j]
+                if nxt == "":
+                    break
+                if nxt.startswith("  "):
+                    break
+                original += "\n" + nxt
+                j += 1
+            originals.append(original)
+            i = j
+            continue
+        i += 1
+
+    return originals[-max_entries:] if max_entries > 0 else []
+
+
+def is_recent_duplicate(original: str, log_path: str, max_entries: int = 10) -> bool:
+    """True if *original* appears in the last *max_entries* log entries."""
+    if not original:
+        return False
+    try:
+        recent = recent_originals(log_path, max_entries=max_entries)
+        return original in recent
+    except Exception:
+        return False
+
+
 def log(
     original: str,
     source: str,

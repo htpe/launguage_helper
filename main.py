@@ -45,7 +45,8 @@ def main() -> None:
     tray = TrayApp(monitor)
     print("[main] Language Helper started. Look for the tray icon.")
     print(f"[main] Hotkey: {monitor.hotkey}")
-    print("[main] Press the hotkey once to ENABLE auto-translation, again to DISABLE.")
+    print("[main] Auto-translation starts ENABLED by default.")
+    print("[main] Press the hotkey to toggle auto-translation ON/OFF.")
 
     try:
         tray.run()          # Blocking — runs until Quit is selected
