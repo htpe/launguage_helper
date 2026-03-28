@@ -1,5 +1,4 @@
-"""
-System tray icon.
+"""System tray icon (Qt).
 
 Provides a tray icon with a context menu:
   • Translation: ON / OFF — toggles watch mode (same as the hotkey)
@@ -9,101 +8,123 @@ Provides a tray icon with a context menu:
 The icon and tooltip title update to reflect the current watch-mode state.
 """
 
+from __future__ import annotations
+
 import threading
-import sys
 
-import pystray
-from PIL import Image, ImageDraw
-
-from src import config as cfg_mod
-from src import tooltip as tooltip_mod
-
-_COLOR_ON  = "#22c55e"   # green  — watch mode active
-_COLOR_OFF = "#7c3aed"   # purple — watch mode inactive
+from PySide6 import QtCore, QtGui, QtWidgets
 
 
-def _create_icon_image(active: bool) -> Image.Image:
-    """Create the tray icon; green when active, purple when inactive."""
+_COLOR_ON = "#22c55e"   # green  — watch mode active
+_COLOR_OFF = "#7c3aed"  # purple — watch mode inactive
+
+
+def _create_tray_icon(active: bool) -> QtGui.QIcon:
     size = 64
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    color = _COLOR_ON if active else _COLOR_OFF
-    draw.ellipse([4, 4, size - 4, size - 4], fill=color)
-    draw.text((20, 14), "T", fill="white")
-    return img
+    pix = QtGui.QPixmap(size, size)
+    pix.fill(QtCore.Qt.GlobalColor.transparent)
+
+    painter = QtGui.QPainter(pix)
+    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+
+    color = QtGui.QColor(_COLOR_ON if active else _COLOR_OFF)
+    painter.setBrush(QtGui.QBrush(color))
+    painter.setPen(QtCore.Qt.PenStyle.NoPen)
+    painter.drawEllipse(4, 4, size - 8, size - 8)
+
+    painter.setPen(QtGui.QPen(QtGui.QColor("white")))
+    font = QtGui.QFont()
+    font.setBold(True)
+    font.setPointSize(20)
+    painter.setFont(font)
+    painter.drawText(QtCore.QRect(0, 0, size, size), QtCore.Qt.AlignmentFlag.AlignCenter, "T")
+    painter.end()
+
+    return QtGui.QIcon(pix)
 
 
-class TrayApp:
+class TrayApp(QtCore.QObject):
+    state_changed = QtCore.Signal(bool)
+
     def __init__(self, monitor) -> None:
+        super().__init__()
         self._monitor = monitor
-        self._icon: pystray.Icon | None = None
-        # Let the monitor call us back when the state flips
-        monitor.set_toggle_callback(self._on_state_change)
+        self._tray: QtWidgets.QSystemTrayIcon | None = None
+        self._menu: QtWidgets.QMenu | None = None
+        self._toggle_action: QtGui.QAction | None = None
 
-    def run(self) -> None:
-        """Build the tray icon and start its event loop (blocking)."""
+        self.state_changed.connect(self._apply_state, QtCore.Qt.ConnectionType.QueuedConnection)
+        monitor.set_toggle_callback(self._on_state_change_from_any_thread)
+
+    def start(self) -> None:
+        app = QtWidgets.QApplication.instance()
+        if app is None:
+            raise RuntimeError("QApplication must be created before starting TrayApp")
+
         active = self._monitor.is_active
-        menu = pystray.Menu(
-            pystray.MenuItem("Language Helper", None, enabled=False),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem(
-                self._toggle_label,
-                self._toggle,
-                checked=lambda item: self._monitor.is_active,
-            ),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Reload Config", self._reload_config),
-            pystray.MenuItem("Quit", self._quit),
-        )
-        self._icon = pystray.Icon(
-            "language_helper",
-            _create_icon_image(active),
-            f"Language Helper — {'ON' if active else 'OFF'}",
-            menu,
-        )
-        # On macOS, Tk/Cocoa UI operations are much more stable when handled on
-        # the main thread. Run the tray in detached mode so the main thread can
-        # run the tooltip Tk event loop.
-        if sys.platform == "darwin":
-            self._icon.run_detached()
+        tray = QtWidgets.QSystemTrayIcon(_create_tray_icon(active))
+        tray.setToolTip(f"Language Helper — {'ON' if active else 'OFF'}")
+
+        menu = QtWidgets.QMenu()
+        title = QtGui.QAction("Language Helper")
+        title.setEnabled(False)
+        menu.addAction(title)
+        menu.addSeparator()
+
+        toggle_action = QtGui.QAction("Translation: ON" if active else "Translation: OFF")
+        toggle_action.setCheckable(True)
+        toggle_action.setChecked(active)
+        toggle_action.triggered.connect(self._toggle)
+        menu.addAction(toggle_action)
+        menu.addSeparator()
+
+        reload_action = QtGui.QAction("Reload Config")
+        reload_action.triggered.connect(self._reload_config)
+        menu.addAction(reload_action)
+
+        quit_action = QtGui.QAction("Quit")
+        quit_action.triggered.connect(self._quit)
+        menu.addAction(quit_action)
+
+        tray.setContextMenu(menu)
+        tray.show()
+
+        self._tray = tray
+        self._menu = menu
+        self._toggle_action = toggle_action
+
+    @QtCore.Slot(bool)
+    def _apply_state(self, active: bool) -> None:
+        if self._tray is None:
             return
+        self._tray.setIcon(_create_tray_icon(active))
+        self._tray.setToolTip(f"Language Helper — {'ON' if active else 'OFF'}")
+        if self._toggle_action is not None:
+            self._toggle_action.blockSignals(True)
+            try:
+                self._toggle_action.setChecked(active)
+                self._toggle_action.setText("Translation: ON" if active else "Translation: OFF")
+            finally:
+                self._toggle_action.blockSignals(False)
 
-        self._icon.run()
-
-    def stop(self) -> None:
-        if self._icon:
-            self._icon.stop()
-
-    # ------------------------------------------------------------------
-    # Menu helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _toggle_label(item) -> str:   # noqa: ARG004
-        return "Translation: ON" if item.checked else "Translation: OFF"
-
-    def _on_state_change(self, active: bool) -> None:
-        """Called by ClipboardMonitor after each toggle — refresh icon & title."""
-        if self._icon is None:
-            return
-        self._icon.icon = _create_icon_image(active)
-        self._icon.title = f"Language Helper — {'ON' if active else 'OFF'}"
-        self._icon.update_menu()
+    def _on_state_change_from_any_thread(self, active: bool) -> None:
+        # Hotkey callbacks can come from non-GUI threads.
+        self.state_changed.emit(bool(active))
 
     # ------------------------------------------------------------------
     # Menu actions
     # ------------------------------------------------------------------
 
-    def _toggle(self, icon, item) -> None:  # noqa: ARG002
+    def _toggle(self) -> None:
         threading.Thread(target=self._monitor.toggle, daemon=True).start()
 
-    def _reload_config(self, icon, item) -> None:  # noqa: ARG002
+    def _reload_config(self) -> None:
         threading.Thread(target=self._monitor.reload_config, daemon=True).start()
 
-    def _quit(self, icon, item) -> None:  # noqa: ARG002
-        self._monitor.stop()
-        if self._icon:
-            self._icon.stop()
-        # If the tooltip event loop is running (macOS mode), request exit so
-        # the process can terminate cleanly.
-        tooltip_mod.request_exit()
+    def _quit(self) -> None:
+        try:
+            self._monitor.stop()
+        finally:
+            app = QtWidgets.QApplication.instance()
+            if app is not None:
+                app.quit()

@@ -15,6 +15,8 @@ from src.tray import TrayApp
 from src import single_instance
 from src import tooltip
 
+from PySide6 import QtWidgets
+
 
 def main() -> None:
     # Helpful for diagnosing hard crashes/segfaults (common with GUI toolkits).
@@ -28,9 +30,8 @@ def main() -> None:
         print("[main] Language Helper is already running.")
         return
 
-    # Windows console Ctrl events (CTRL_C_EVENT/CTRL_BREAK_EVENT) can surface as
-    # KeyboardInterrupt inside pystray's GetMessage loop. Since this is a tray
-    # app (Quit is handled via the tray menu), ignore those console events.
+    # Windows console Ctrl events (CTRL_C_EVENT/CTRL_BREAK_EVENT) are not used
+    # for app lifecycle (Quit is handled via the tray menu), so ignore them.
     if sys.platform == "win32":
         try:
             ctypes.windll.kernel32.SetConsoleCtrlHandler(None, True)
@@ -47,24 +48,24 @@ def main() -> None:
         except Exception:
             pass
 
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    app.setQuitOnLastWindowClosed(False)
+
+    tooltip.init_qt()
+
     monitor = ClipboardMonitor()
     monitor.start()
 
     tray = TrayApp(monitor)
+    tray.start()
+
     print("[main] Language Helper started. Look for the tray icon.")
     print(f"[main] Hotkey: {monitor.hotkey}")
     print("[main] Auto-translation starts ENABLED by default.")
     print("[main] Press the hotkey to toggle auto-translation ON/OFF.")
 
     try:
-        if sys.platform == "darwin":
-            # macOS: run tray detached and keep Tk on the main thread.
-            tray.run()
-            tooltip.run_tooltip_event_loop()  # Blocking until Quit
-        else:
-            tray.run()      # Blocking — runs until Quit is selected
-    except KeyboardInterrupt:
-        pass
+        app.exec()
     finally:
         monitor.stop()
         print("[main] Language Helper stopped.")

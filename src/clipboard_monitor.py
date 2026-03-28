@@ -490,7 +490,13 @@ class ClipboardMonitor:
             threading.Timer(_MULTI_CLICK_MAX_INTERVAL_S, _debounced).start()
 
     def _capture_selection(self, x: int, y: int) -> None:
-        """Wait briefly, copy selected text, translate if the clipboard changed."""
+        """Wait briefly, copy selected text, translate and show a tooltip.
+
+        Note: the clipboard may not change when the user re-selects the same
+        text (the copied value is identical). In that case we still translate
+        and show the tooltip, but we rely on the existing de-dupe logic to
+        avoid re-logging.
+        """
         time.sleep(0.18)
 
         try:
@@ -511,11 +517,11 @@ class ClipboardMonitor:
         except Exception:
             return
 
-        # If the clipboard didn't change, we likely clicked without selecting
-        # text, or the OS blocked synthetic copy (common on macOS without
-        # Accessibility/Input Monitoring permission). In that case, do nothing.
-        if after == before:
-            return
+        # The clipboard can stay unchanged when the user re-selects the same
+        # text (common) *or* when copy is blocked. Because this method is only
+        # invoked after drag/multi-click heuristics already indicated a likely
+        # selection, we still proceed and rely on downstream de-dupe to avoid
+        # re-logging.
 
         text = after.strip()
         if not text:
