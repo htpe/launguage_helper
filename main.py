@@ -8,13 +8,21 @@ and launches the system tray icon on the main thread.
 import ctypes
 import os
 import sys
+import faulthandler
 
 from src.clipboard_monitor import ClipboardMonitor
 from src.tray import TrayApp
 from src import single_instance
+from src import tooltip
 
 
 def main() -> None:
+    # Helpful for diagnosing hard crashes/segfaults (common with GUI toolkits).
+    try:
+        faulthandler.enable()
+    except Exception:
+        pass
+
     instance_lock = single_instance.acquire("language_helper")
     if instance_lock is None:
         print("[main] Language Helper is already running.")
@@ -49,7 +57,12 @@ def main() -> None:
     print("[main] Press the hotkey to toggle auto-translation ON/OFF.")
 
     try:
-        tray.run()          # Blocking — runs until Quit is selected
+        if sys.platform == "darwin":
+            # macOS: run tray detached and keep Tk on the main thread.
+            tray.run()
+            tooltip.run_tooltip_event_loop()  # Blocking until Quit
+        else:
+            tray.run()      # Blocking — runs until Quit is selected
     except KeyboardInterrupt:
         pass
     finally:

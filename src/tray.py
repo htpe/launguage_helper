@@ -10,11 +10,13 @@ The icon and tooltip title update to reflect the current watch-mode state.
 """
 
 import threading
+import sys
 
 import pystray
 from PIL import Image, ImageDraw
 
 from src import config as cfg_mod
+from src import tooltip as tooltip_mod
 
 _COLOR_ON  = "#22c55e"   # green  — watch mode active
 _COLOR_OFF = "#7c3aed"   # purple — watch mode inactive
@@ -59,6 +61,13 @@ class TrayApp:
             f"Language Helper — {'ON' if active else 'OFF'}",
             menu,
         )
+        # On macOS, Tk/Cocoa UI operations are much more stable when handled on
+        # the main thread. Run the tray in detached mode so the main thread can
+        # run the tooltip Tk event loop.
+        if sys.platform == "darwin":
+            self._icon.run_detached()
+            return
+
         self._icon.run()
 
     def stop(self) -> None:
@@ -95,3 +104,6 @@ class TrayApp:
         self._monitor.stop()
         if self._icon:
             self._icon.stop()
+        # If the tooltip event loop is running (macOS mode), request exit so
+        # the process can terminate cleanly.
+        tooltip_mod.request_exit()

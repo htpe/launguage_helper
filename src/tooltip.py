@@ -8,6 +8,268 @@ the mouse cursor with the translated text.  The window auto-closes after
 
 import sys
 import tkinter as tk
+import queue
+import threading
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class _TooltipRequest:
+    translations: dict[str, str]
+    x: int
+    y: int
+    duration_ms: int
+    examples: list[str]
+    done: threading.Event
+
+
+class _TooltipService:
+    """Runs Tk on one thread and services tooltip requests.
+
+    On macOS, creating/using Tk widgets from non-main threads can cause
+    intermittent hard crashes. This service lets worker threads request a
+    tooltip while all Tk work stays on the Tk thread.
+    """
+
+    def __init__(self) -> None:
+        self._queue: queue.Queue[_TooltipRequest] = queue.Queue()
+        self._root: tk.Tk | None = None
+        self._window: tk.Toplevel | None = None
+        self._current_done: threading.Event | None = None
+        self._running = False
+
+    def is_running(self) -> bool:
+        return self._running and self._root is not None
+
+    def enqueue_and_wait(
+        self,
+        translations: dict[str, str],
+        x: int,
+        y: int,
+        duration_ms: int,
+        examples: list[str] | None,
+    ) -> None:
+        done = threading.Event()
+        req = _TooltipRequest(
+            translations=translations,
+            x=int(x),
+            y=int(y),
+            duration_ms=int(duration_ms),
+            examples=list(examples or []),
+            done=done,
+        )
+        self._queue.put(req)
+        # Preserve the previous blocking semantics: callers wait until the
+        # tooltip closes (or is replaced).
+        done.wait()
+
+    def request_exit(self) -> None:
+        if self._root is None:
+            return
+        try:
+            self._root.after(0, self._root.quit)
+        except Exception:
+            pass
+
+    def run_forever(self) -> None:
+        """Start the Tk event loop (blocking). Must be called on the Tk thread."""
+        if self._running:
+            return
+
+        root = tk.Tk()
+        self._root = root
+        self._running = True
+
+        # Keep a hidden root; tooltips are Toplevel windows.
+        try:
+            root.withdraw()
+        except Exception:
+            pass
+
+        def _poll() -> None:
+            if self._root is None:
+                return
+            try:
+                # Process at most a few items per tick.
+                for _ in range(5):
+                    req = self._queue.get_nowait()
+                    self._show_request(req)
+            except queue.Empty:
+                pass
+            finally:
+                try:
+                    self._root.after(50, _poll)
+                except Exception:
+                    pass
+
+        _poll()
+        try:
+            root.mainloop()
+        finally:
+            self._running = False
+            # Best-effort cleanup.
+            try:
+                if self._window is not None:
+                    self._window.destroy()
+            except Exception:
+                pass
+            self._window = None
+            if self._current_done is not None:
+                self._current_done.set()
+            self._current_done = None
+            try:
+                root.destroy()
+            except Exception:
+                pass
+            self._root = None
+
+    def _close_window(self) -> None:
+        if self._window is not None:
+            try:
+                self._window.destroy()
+            except Exception:
+                pass
+            self._window = None
+        if self._current_done is not None:
+            self._current_done.set()
+            self._current_done = None
+
+    def _show_request(self, req: _TooltipRequest) -> None:
+        if self._root is None:
+            req.done.set()
+            return
+
+        # Replace any existing tooltip (unblock the previous waiter).
+        self._close_window()
+        self._current_done = req.done
+
+        win = tk.Toplevel(self._root)
+        self._window = win
+
+        win.overrideredirect(True)          # No title bar / decoration
+        win.attributes("-topmost", True)    # Always on top
+        win.attributes("-alpha", 0.92)      # Slight transparency
+
+        # Build content
+        frame = tk.Frame(win, bg="#1e1e2e", padx=10, pady=8)
+        frame.pack()
+
+        if sys.platform == "win32":
+            font_small_bold = ("Segoe UI", 8, "bold")
+            font_body = ("Segoe UI", 10)
+            font_examples_header = ("Segoe UI", 7, "bold")
+            font_example = ("Segoe UI", 9, "italic")
+            font_close = ("Segoe UI", 8)
+        else:
+            # Use Tk defaults on macOS/Linux to avoid missing-font fallbacks.
+            font_small_bold = ("TkDefaultFont", 9, "bold")
+            font_body = ("TkDefaultFont", 11)
+            font_examples_header = ("TkDefaultFont", 8, "bold")
+            font_example = ("TkDefaultFont", 10, "italic")
+            font_close = ("TkDefaultFont", 9)
+
+        for lang, translated in req.translations.items():
+            lang_label = tk.Label(
+                frame,
+                text=f"[{lang.upper()}]",
+                font=font_small_bold,
+                bg="#1e1e2e",
+                fg="#cba6f7",
+                anchor="w",
+            )
+            lang_label.pack(fill="x")
+
+            text_label = tk.Label(
+                frame,
+                text=translated,
+                font=font_body,
+                bg="#1e1e2e",
+                fg="#cdd6f4",
+                wraplength=380,
+                justify="left",
+                anchor="w",
+            )
+            text_label.pack(fill="x", pady=(0, 4))
+
+        # Examples section (single-word selections only)
+        if req.examples:
+            sep = tk.Frame(frame, bg="#45475a", height=1)
+            sep.pack(fill="x", pady=(4, 6))
+
+            ex_header = tk.Label(
+                frame,
+                text="EXAMPLES",
+                font=font_examples_header,
+                bg="#1e1e2e",
+                fg="#a6adc8",
+                anchor="w",
+            )
+            ex_header.pack(fill="x")
+
+            for i, sentence in enumerate(req.examples, 1):
+                ex_label = tk.Label(
+                    frame,
+                    text=f"{i}. {sentence}",
+                    font=font_example,
+                    bg="#1e1e2e",
+                    fg="#a6e3a1",
+                    wraplength=380,
+                    justify="left",
+                    anchor="w",
+                )
+                ex_label.pack(fill="x", pady=(1, 2))
+
+        close_btn = tk.Label(
+            frame,
+            text="✕",
+            font=font_close,
+            bg="#1e1e2e",
+            fg="#6c7086",
+            cursor="hand2",
+        )
+        close_btn.pack(anchor="e")
+        close_btn.bind("<Button-1>", lambda _: self._close_window())
+
+        # Position: offset slightly from cursor so it doesn't cover text
+        win.update_idletasks()
+        w = win.winfo_reqwidth()
+        h = win.winfo_reqheight()
+        screen_w = win.winfo_screenwidth()
+        screen_h = win.winfo_screenheight()
+
+        pos_x = min(req.x + 12, screen_w - w - 10)
+        pos_y = min(req.y + 20, screen_h - h - 10)
+        win.geometry(f"+{pos_x}+{pos_y}")
+
+        # Auto-close after duration
+        try:
+            win.after(req.duration_ms, self._close_window)
+        except Exception:
+            pass
+
+
+_SERVICE: _TooltipService | None = None
+
+
+def is_service_running() -> bool:
+    return _SERVICE is not None and _SERVICE.is_running()
+
+
+def request_exit() -> None:
+    if _SERVICE is not None:
+        _SERVICE.request_exit()
+
+
+def run_tooltip_event_loop() -> None:
+    """Run the tooltip Tk event loop (blocking).
+
+    Recommended on macOS: run this on the main thread, and run the tray icon
+    using `pystray.Icon.run_detached()`.
+    """
+    global _SERVICE
+    if _SERVICE is None:
+        _SERVICE = _TooltipService()
+    _SERVICE.run_forever()
 
 
 class Tooltip:
@@ -156,5 +418,14 @@ def show_tooltip(
     duration_ms: int = 4000,
     examples: list[str] | None = None,
 ) -> None:
-    """Convenience function — creates a Tooltip and shows it immediately."""
+    """Show a tooltip.
+
+    If the Tk service is running, the request is marshaled to the Tk thread and
+    this call blocks until the tooltip is closed (preserving historical
+    behavior). Otherwise it falls back to creating a standalone Tk root.
+    """
+    if _SERVICE is not None and _SERVICE.is_running():
+        _SERVICE.enqueue_and_wait(translations, x, y, duration_ms, examples)
+        return
+
     Tooltip(translations, duration_ms, examples).show(x, y)
