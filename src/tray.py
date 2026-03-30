@@ -61,37 +61,49 @@ class TrayApp(QtCore.QObject):
         if app is None:
             raise RuntimeError("QApplication must be created before starting TrayApp")
 
-        active = self._monitor.is_active
-        tray = QtWidgets.QSystemTrayIcon(_create_tray_icon(active))
-        tray.setToolTip(f"Language Helper — {'ON' if active else 'OFF'}")
+        if not QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
+            # Avoid potential hard failures on platforms/environments without
+            # tray support (can happen on some macOS setups or restricted shells).
+            print("[tray] System tray is not available; exiting.", flush=True)
+            QtCore.QTimer.singleShot(0, app.quit)
+            return
 
-        menu = QtWidgets.QMenu()
-        title = QtGui.QAction("Language Helper")
-        title.setEnabled(False)
-        menu.addAction(title)
-        menu.addSeparator()
+        try:
+            active = self._monitor.is_active
+            tray = QtWidgets.QSystemTrayIcon(_create_tray_icon(active))
+            tray.setToolTip(f"Language Helper — {'ON' if active else 'OFF'}")
 
-        toggle_action = QtGui.QAction("Translation: ON" if active else "Translation: OFF")
-        toggle_action.setCheckable(True)
-        toggle_action.setChecked(active)
-        toggle_action.triggered.connect(self._toggle)
-        menu.addAction(toggle_action)
-        menu.addSeparator()
+            menu = QtWidgets.QMenu()
+            title = QtGui.QAction("Language Helper")
+            title.setEnabled(False)
+            menu.addAction(title)
+            menu.addSeparator()
 
-        reload_action = QtGui.QAction("Reload Config")
-        reload_action.triggered.connect(self._reload_config)
-        menu.addAction(reload_action)
+            toggle_action = QtGui.QAction("Translation: ON" if active else "Translation: OFF")
+            toggle_action.setCheckable(True)
+            toggle_action.setChecked(active)
+            toggle_action.triggered.connect(self._toggle)
+            menu.addAction(toggle_action)
+            menu.addSeparator()
 
-        quit_action = QtGui.QAction("Quit")
-        quit_action.triggered.connect(self._quit)
-        menu.addAction(quit_action)
+            reload_action = QtGui.QAction("Reload Config")
+            reload_action.triggered.connect(self._reload_config)
+            menu.addAction(reload_action)
 
-        tray.setContextMenu(menu)
-        tray.show()
+            quit_action = QtGui.QAction("Quit")
+            quit_action.triggered.connect(self._quit)
+            menu.addAction(quit_action)
 
-        self._tray = tray
-        self._menu = menu
-        self._toggle_action = toggle_action
+            tray.setContextMenu(menu)
+            tray.show()
+
+            self._tray = tray
+            self._menu = menu
+            self._toggle_action = toggle_action
+        except Exception as exc:  # noqa: BLE001
+            print(f"[tray] Failed to initialize system tray: {exc}", flush=True)
+            QtCore.QTimer.singleShot(0, app.quit)
+            return
 
     @QtCore.Slot(bool)
     def _apply_state(self, active: bool) -> None:

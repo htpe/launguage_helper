@@ -9,6 +9,7 @@ import ctypes
 import os
 import sys
 import faulthandler
+import traceback
 
 from src.clipboard_monitor import ClipboardMonitor
 from src.tray import TrayApp
@@ -17,13 +18,60 @@ from src import tooltip
 
 from PySide6 import QtWidgets
 
+_FAULT_FILE = None
+
+
+def _runtime_base_dir() -> str:
+    """Best-effort directory for runtime-created files (logs).
+
+    When frozen, prefer the executable directory; otherwise use the project
+    root (directory containing main.py).
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _install_crash_logging() -> None:
+    """Write Python exceptions and faulthandler output to log files.
+
+    This is especially helpful on macOS where GUI apps may crash without a
+    visible console.
+    """
+    base_dir = _runtime_base_dir()
+    log_dir = os.path.join(base_dir, "log")
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+    except Exception:
+        log_dir = base_dir
+
+    fault_path = os.path.join(log_dir, "faulthandler.log")
+    exc_path = os.path.join(log_dir, "exceptions.log")
+
+    global _FAULT_FILE
+    try:
+        _FAULT_FILE = open(fault_path, "a", encoding="utf-8")
+        faulthandler.enable(file=_FAULT_FILE)
+    except Exception:
+        try:
+            faulthandler.enable()
+        except Exception:
+            pass
+
+    def _hook(exc_type, exc, tb) -> None:  # noqa: ANN001
+        try:
+            with open(exc_path, "a", encoding="utf-8") as f:
+                f.write("\n" + ("=" * 80) + "\n")
+                f.write("Uncaught exception:\n")
+                traceback.print_exception(exc_type, exc, tb, file=f)
+        except Exception:
+            pass
+
+    sys.excepthook = _hook
+
 
 def main() -> None:
-    # Helpful for diagnosing hard crashes/segfaults (common with GUI toolkits).
-    try:
-        faulthandler.enable()
-    except Exception:
-        pass
+    _install_crash_logging()
 
     instance_lock = single_instance.acquire("language_helper")
     if instance_lock is None:

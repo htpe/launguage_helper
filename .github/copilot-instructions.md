@@ -8,7 +8,7 @@ A Windows + macOS system tray application that monitors clipboard text selection
 - `src/config.py` — Config loader (reads `config.json`)
 - `src/translator.py` — Translation logic using Google Translate public endpoint (urllib)
 - `src/clipboard_monitor.py` — Global toggle: hotkey flips watch mode on/off; pynput mouse listener detects text selection and auto-translates on mouse release
-- `src/tooltip.py` — Tkinter floating overlay window shown near cursor
+- `src/tooltip.py` — Qt (PySide6) floating overlay window shown near cursor
 - `src/tray.py` — System tray icon via `pystray`; green when active, purple when inactive
 
 ## Tech Stack
@@ -16,7 +16,7 @@ A Windows + macOS system tray application that monitors clipboard text selection
 - `urllib.request` (stdlib) for translation via Google Translate's public endpoint — no API key needed
 - `pyperclip` for clipboard access
 - `pystray` + `Pillow` for system tray icon
-- `tkinter` for floating tooltip UI (built-in)
+- `PySide6` (Qt) for floating tooltip UI (cross-platform)
 - `keyboard` for global hotkey support on Windows (configurable)
 - `pynput` for global mouse listener (left-button release triggers translation)
 - No platform-specific cursor dependency (cursor position via `pynput`)

@@ -68,7 +68,17 @@ Grant these to the app you run it from (Terminal / iTerm / VS Code / the package
 
 If permissions are missing, selecting text may not copy to the clipboard, and no tooltip will appear.
 
-## Configuration — `config.json`
+## Configuration
+
+The app loads configuration from an OS-specific file when present:
+
+- Windows: `config.windows.json`
+- macOS: `config.macos.json`
+- Fallback: `config.json`
+
+This lets you keep different hotkeys/targets per OS without editing files when switching machines.
+
+### Keys
 
 | Key | Type | Default | Description |
 |---|---|---|---|
@@ -115,14 +125,16 @@ If permissions are missing, selecting text may not copy to the clipboard, and no
 ```
 launguage_helper/
 ├── main.py                 # Entry point
-├── config.json             # User configuration
+├── config.windows.json     # Windows configuration (preferred on Windows)
+├── config.macos.json       # macOS configuration (preferred on macOS)
+├── config.json             # Fallback configuration
 ├── requirements.txt
 ├── src/
 │   ├── config.py           # Config loader
 │   ├── translator.py       # Translation (Google public endpoint via urllib)
 │   ├── clipboard_monitor.py# Hotkey listener + clipboard handling
-│   ├── tooltip.py          # Floating Tkinter overlay
-│   └── tray.py             # System tray icon (pystray)
+│   ├── tooltip.py          # Floating Qt (PySide6) overlay
+│   └── tray.py             # System tray icon (Qt / PySide6)
 └── .github/
     └── copilot-instructions.md
 ```
@@ -130,7 +142,7 @@ launguage_helper/
 ## Tray icon menu
 
 - **Translation: ON / OFF** — same as pressing the hotkey; toggles watch mode. Icon turns green when active.
-- **Reload Config** — picks up changes to `config.json` without restarting.
+- **Reload Config** — picks up changes to the active config file (OS-specific, falling back to `config.json`) without restarting.
 - **Quit** — stops the app cleanly.
 
 ## Troubleshooting
@@ -139,5 +151,5 @@ launguage_helper/
 |---|---|
 | Tooltip does not appear | Make sure text is actually selected *before* pressing the hotkey. |
 | `ModuleNotFoundError` | Run `pip install -r requirements.txt` inside your virtual environment. |
-| Hotkey conflicts | Change `hotkey` in `config.json` to a combination not used by other apps. |
+| Hotkey conflicts | Change `hotkey` in your active config file (`config.windows.json` / `config.macos.json`, fallback `config.json`) to a combination not used by other apps. |
 | Translation errors | Check your internet connection — Google Translate requires network access. |

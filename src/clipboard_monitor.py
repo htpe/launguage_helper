@@ -307,7 +307,14 @@ class ClipboardMonitor:
                 self._last_text = pyperclip.paste() or ""
             except Exception:
                 self._last_text = ""
-            self._start_mouse_listener()
+            try:
+                self._start_mouse_listener()
+            except Exception as exc:  # noqa: BLE001
+                # On macOS, starting global input listeners can fail when
+                # Accessibility/Input Monitoring permission is missing.
+                # Never let that crash the app.
+                self._active = False
+                print(f"[monitor] Failed to start mouse listener: {exc}", flush=True)
             if source == "hotkey":
                 print("[monitor] (hotkey) Auto-translation ENABLED.", flush=True)
         else:
@@ -413,8 +420,13 @@ class ClipboardMonitor:
     def _start_mouse_listener(self) -> None:
         if self._mouse_listener and self._mouse_listener.is_alive():
             return
-        self._mouse_listener = pynput_mouse.Listener(on_click=self._on_mouse_click)
-        self._mouse_listener.start()
+        try:
+            self._mouse_listener = pynput_mouse.Listener(on_click=self._on_mouse_click)
+            self._mouse_listener.start()
+        except Exception as exc:  # noqa: BLE001
+            self._mouse_listener = None
+            print(f"[monitor] Could not start mouse listener: {exc}", flush=True)
+            return
 
     def _stop_mouse_listener(self) -> None:
         if self._mouse_listener:
@@ -545,8 +557,8 @@ class ClipboardMonitor:
     def _show_translation(self, text: str, x: int | None = None, y: int | None = None) -> None:
         """Translate *text*, display the tooltip, and append to the log file."""
         if not self._translate_lock.acquire(blocking=False):
-            # A tooltip is currently being shown (Tk mainloop blocks). Queue the
-            # latest selection so it will still be translated/shown afterwards.
+            # A tooltip is currently being shown. Queue the latest selection so
+            # it will still be translated/shown afterwards.
             with self._pending_lock:
                 self._pending_text = text
             return

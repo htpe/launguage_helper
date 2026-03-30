@@ -7,4 +7,4 @@ __pycache__/
 *.pyd
 *.log
 *.db
-
+LanguageHelper.spec
