@@ -64,9 +64,20 @@ if sys.platform == "win32":
 
     import ctypes as _ctypes
     _k32 = _ctypes.windll.kernel32
+elif sys.platform == "darwin":
+    # macOS: try PyObjC first, fall back to pynput
+    try:
+        from src.macos_hotkey import MacOSHotkey as _MacOSHotkey
+        _HOTKEY_BACKEND = "pyobjc"
+        _GlobalHotKeys = None  # type: ignore[assignment]
+    except (ImportError, ValueError):
+        from pynput.keyboard import GlobalHotKeys as _GlobalHotKeys
+        _HOTKEY_BACKEND = "pynput"
+        _MacOSHotkey = None  # type: ignore[assignment]
 else:
     from pynput.keyboard import GlobalHotKeys as _GlobalHotKeys
     _HOTKEY_BACKEND = "pynput"
+    _MacOSHotkey = None  # type: ignore[assignment]
 
 _SPECIAL_KEYS = {
     "ctrl", "alt", "shift", "cmd", "win", "super",
@@ -295,6 +306,8 @@ class ClipboardMonitor:
                 _keyboard_win.unhook_all_hotkeys()
             except Exception:
                 pass
+        elif _HOTKEY_BACKEND == "pyobjc":
+            self._stop_hotkey_listener()
         else:
             self._stop_hotkey_listener()
         self._stop_mouse_listener()
@@ -384,6 +397,27 @@ class ClipboardMonitor:
                 self._hotkey_handle = None
                 self._hotkey_str = ""
                 print(f"[monitor] Failed to register hotkey '{hotkey}': {exc}", flush=True)
+
+        elif _HOTKEY_BACKEND == "pyobjc":
+            # macOS via PyObjC AppKit
+            self._stop_hotkey_listener()
+            try:
+                self._hotkey_listener = _MacOSHotkey(hotkey, self._on_hotkey)
+                self._hotkey_listener.start()
+                self._hotkey_str = hotkey
+            except Exception as exc:  # noqa: BLE001
+                self._hotkey_str = ""
+                print(f"[monitor] Failed to register hotkey '{hotkey}' (PyObjC): {exc}", flush=True)
+                # Fall back to pynput if PyObjC fails
+                if _GlobalHotKeys:
+                    try:
+                        pynput_hotkey = _to_pynput_hotkey(hotkey)
+                        self._hotkey_listener = _GlobalHotKeys({pynput_hotkey: self._on_hotkey})
+                        self._hotkey_listener.start()
+                        self._hotkey_str = hotkey
+                        print(f"[monitor] Fell back to pynput for hotkey '{hotkey}'", flush=True)
+                    except Exception as exc2:  # noqa: BLE001
+                        print(f"[monitor] Pynput fallback also failed: {exc2}", flush=True)
 
         elif _HOTKEY_BACKEND == "pynput":
             # macOS/Linux via pynput
