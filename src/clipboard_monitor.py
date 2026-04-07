@@ -48,19 +48,26 @@ _COPY_MOD = Key.cmd if sys.platform == "darwin" else Key.ctrl
 # ---------------------------------------------------------------------------
 # Platform-specific hotkey backend
 #
-# On Windows, pynput.keyboard.GlobalHotKeys creates its own win32 keyboard
-# hook with a message pump that conflicts with pystray's GetMessage loop,
-# causing a crash in pystray._win32._mainloop.  The `keyboard` module handles
-# hotkeys differently (via a low-level keyboard hook in its own thread) and
-# has no conflict with pystray on Windows.
+# We prefer `pynput.keyboard.GlobalHotKeys` for reliability.
 #
-# On macOS, `keyboard` requires root / sudo; pynput.GlobalHotKeys is the
-# correct cross-platform approach there.
+# Historical note: older versions used `pystray` on Windows, and
+# `pynput.GlobalHotKeys` could conflict with pystray's win32 message loop.
+# This project now uses a Qt tray icon, so that conflict no longer applies.
+#
+# We still keep the `keyboard` module as a Windows-only fallback because it
+# is cheap and works well in some environments.
 # ---------------------------------------------------------------------------
 if sys.platform == "win32":
-    import keyboard as _keyboard_win  # type: ignore[import]
-    _HOTKEY_BACKEND = "keyboard"
-    _GlobalHotKeys = None  # type: ignore[assignment]
+    from pynput.keyboard import GlobalHotKeys as _GlobalHotKeys
+    _HOTKEY_BACKEND = "pynput"
+
+    # Not used on Windows; defined for type-checkers.
+    _MacOSHotkey = None  # type: ignore[assignment]
+
+    try:
+        import keyboard as _keyboard_win  # type: ignore[import]
+    except Exception:  # noqa: BLE001
+        _keyboard_win = None  # type: ignore[assignment]
 
     import ctypes as _ctypes
     _k32 = _ctypes.windll.kernel32
@@ -279,7 +286,7 @@ class ClipboardMonitor:
         self._running = True
         self._hotkey_watchdog_stop.clear()
         self._register_hotkey(force=True)
-        if _HOTKEY_BACKEND == "keyboard":
+        if sys.platform == "win32":
             self._start_hotkey_watchdog()
 
         if self._hotkey_str:
@@ -296,14 +303,15 @@ class ClipboardMonitor:
         self._hotkey_watchdog_stop.set()
         if _HOTKEY_BACKEND == "keyboard":
             try:
-                if self._hotkey_handle is not None:
+                if _keyboard_win is not None and self._hotkey_handle is not None:
                     try:
                         _keyboard_win.remove_hotkey(self._hotkey_handle)
                     except Exception:
                         pass
                 self._hotkey_handle = None
                 self._hotkey_str = ""
-                _keyboard_win.unhook_all_hotkeys()
+                if _keyboard_win is not None:
+                    _keyboard_win.unhook_all_hotkeys()
             except Exception:
                 pass
         elif _HOTKEY_BACKEND == "pyobjc":
@@ -365,16 +373,22 @@ class ClipboardMonitor:
     def _register_hotkey(self, force: bool = False) -> None:
         """(Re)register the hotkey for the current config.
 
-        On Windows we use the `keyboard` backend which can occasionally stop
-        receiving events after sleep/lock cycles. Re-registering is a cheap and
-        effective recovery.
+        On Windows, the hotkey backend can occasionally stop receiving events
+        after sleep/lock cycles. Re-registering is a cheap and effective
+        recovery.
         """
+        global _HOTKEY_BACKEND  # noqa: PLW0603
         hotkey = self._cfg.get("hotkey", "ctrl+alt+t")
 
         if not force and hotkey == self._hotkey_str:
             return
 
         if _HOTKEY_BACKEND == "keyboard":
+            if _keyboard_win is None:
+                self._hotkey_handle = None
+                self._hotkey_str = ""
+                print("[monitor] Windows hotkey backend 'keyboard' is unavailable (missing dependency).", flush=True)
+                return
             # Remove the previous handler first to avoid duplicate toggles.
             if self._hotkey_handle is not None:
                 try:
@@ -420,7 +434,7 @@ class ClipboardMonitor:
                         print(f"[monitor] Pynput fallback also failed: {exc2}", flush=True)
 
         elif _HOTKEY_BACKEND == "pynput":
-            # macOS/Linux via pynput
+            # cross-platform via pynput
             self._stop_hotkey_listener()
             try:
                 pynput_hotkey = _to_pynput_hotkey(hotkey)
@@ -429,7 +443,18 @@ class ClipboardMonitor:
                 self._hotkey_str = hotkey
             except Exception as exc:  # noqa: BLE001
                 self._hotkey_str = ""
-                print(f"[monitor] Failed to register hotkey '{hotkey}': {exc}")
+                print(f"[monitor] Failed to register hotkey '{hotkey}' via pynput: {exc}", flush=True)
+
+                # Windows-only: fallback to `keyboard` if available.
+                if sys.platform == "win32" and _keyboard_win is not None:
+                    try:
+                        # Switch backend for the remainder of the process.
+                        _HOTKEY_BACKEND = "keyboard"
+                        self._register_hotkey(force=True)
+                        self._start_hotkey_watchdog()
+                        print(f"[monitor] Fell back to 'keyboard' hotkey backend for '{hotkey}'", flush=True)
+                    except Exception as exc2:  # noqa: BLE001
+                        print(f"[monitor] Windows fallback to 'keyboard' also failed: {exc2}", flush=True)
 
     def _start_hotkey_watchdog(self) -> None:
         if self._hotkey_watchdog_thread and self._hotkey_watchdog_thread.is_alive():
@@ -441,8 +466,7 @@ class ClipboardMonitor:
             while self._running and not self._hotkey_watchdog_stop.wait(interval_s):
                 if not self._running:
                     return
-                if _HOTKEY_BACKEND == "keyboard":
-                    self._register_hotkey(force=True)
+                self._register_hotkey(force=True)
 
         self._hotkey_watchdog_thread = threading.Thread(
             target=_watchdog,
@@ -544,11 +568,6 @@ class ClipboardMonitor:
         avoid re-logging.
         """
         time.sleep(0.18)
-
-        try:
-            before = pyperclip.paste() or ""
-        except Exception:
-            before = ""
 
         # We synthesize Ctrl+C/Cmd+C to capture the selection. On Windows, the
         # global hotkey backend can occasionally mis-detect synthetic key events

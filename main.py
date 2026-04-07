@@ -10,6 +10,7 @@ import os
 import sys
 import faulthandler
 import traceback
+import threading
 
 from src.clipboard_monitor import ClipboardMonitor
 from src.tray import TrayApp
@@ -68,6 +69,21 @@ def _install_crash_logging() -> None:
             pass
 
     sys.excepthook = _hook
+
+    # Also log uncaught exceptions from background threads (Python 3.8+).
+    def _thread_hook(args: threading.ExceptHookArgs) -> None:  # noqa: ANN001
+        try:
+            with open(exc_path, "a", encoding="utf-8") as f:
+                f.write("\n" + ("=" * 80) + "\n")
+                f.write(f"Uncaught thread exception: {getattr(args, 'thread', None)}\n")
+                traceback.print_exception(args.exc_type, args.exc_value, args.exc_traceback, file=f)
+        except Exception:
+            pass
+
+    try:
+        threading.excepthook = _thread_hook  # type: ignore[assignment]
+    except Exception:
+        pass
 
 
 def main() -> None:
