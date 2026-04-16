@@ -343,7 +343,11 @@ class ClipboardMonitor:
             if source == "hotkey":
                 print("[monitor] (hotkey) Auto-translation DISABLED.", flush=True)
         if self._on_toggle_callback:
-            self._on_toggle_callback(self._active)
+            # Backwards compatible: callback may accept (active) or (active, source)
+            try:
+                self._on_toggle_callback(self._active, source)
+            except TypeError:
+                self._on_toggle_callback(self._active)
         return self._active
 
     def reload_config(self) -> None:

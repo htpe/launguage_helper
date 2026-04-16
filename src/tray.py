@@ -44,7 +44,7 @@ def _create_tray_icon(active: bool) -> QtGui.QIcon:
 
 
 class TrayApp(QtCore.QObject):
-    state_changed = QtCore.Signal(bool)
+    state_changed = QtCore.Signal(bool, object)
 
     def __init__(self, monitor) -> None:
         super().__init__()
@@ -105,8 +105,8 @@ class TrayApp(QtCore.QObject):
             QtCore.QTimer.singleShot(0, app.quit)
             return
 
-    @QtCore.Slot(bool)
-    def _apply_state(self, active: bool) -> None:
+    @QtCore.Slot(bool, object)
+    def _apply_state(self, active: bool, source: object) -> None:
         if self._tray is None:
             return
         self._tray.setIcon(_create_tray_icon(active))
@@ -119,9 +119,22 @@ class TrayApp(QtCore.QObject):
             finally:
                 self._toggle_action.blockSignals(False)
 
-    def _on_state_change_from_any_thread(self, active: bool) -> None:
+        # Only show notifications for hotkey toggles.
+        if source == "hotkey":
+            try:
+                self._tray.showMessage(
+                    "Language Helper",
+                    "Auto-translation ENABLED" if active else "Auto-translation DISABLED",
+                    QtWidgets.QSystemTrayIcon.MessageIcon.Information,
+                    2000,
+                )
+            except Exception:
+                # Some environments/platforms may not support tray messages.
+                pass
+
+    def _on_state_change_from_any_thread(self, active: bool, source: object | None = None) -> None:
         # Hotkey callbacks can come from non-GUI threads.
-        self.state_changed.emit(bool(active))
+        self.state_changed.emit(bool(active), source)
 
     # ------------------------------------------------------------------
     # Menu actions
