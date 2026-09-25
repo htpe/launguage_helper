@@ -14,6 +14,7 @@ The hotkey (configured via `config.json`, default is `ctrl+shift+t` if not set) 
 | Press | Effect |
 |---|---|
 | Any press | Toggle watch mode ON/OFF (green when ON, purple when OFF) |
+| Delete-log shortcut | Remove the most recent translation from the log file |
 
 While watch mode is **ON**, simply **select any text with the mouse** (drag to highlight, or double/triple-click to select a word/paragraph). When you finish the selection, the text is automatically copied, translated, and a floating tooltip appears near your cursor. Every translation is also written to the log file.
 
@@ -85,6 +86,7 @@ This lets you keep different hotkeys/targets per OS without editing files when s
 | `source_language` | string | `"auto"` | Language of selected text. Use `"auto"` for auto-detection, or an ISO 639-1 code (e.g. `"en"`, `"de"`). |
 | `target_languages` | array | `["en","zh-CN"]` | 1–2 language codes to translate into. |
 | `hotkey` | string | `"ctrl+alt+t"` | Global hotkey that toggles watch mode on/off. |
+| `delete_last_log_hotkey` | string | `"ctrl+alt+backspace"` | Global hotkey that removes the most recent translation entry from the log file. |
 | `tooltip_duration_ms` | int | `4000` | Milliseconds the tooltip stays visible. |
 | `max_chars` | int | `500` | Maximum characters of selected text to translate. |
 | `exclusive_source_language` | bool | `false` | If `true` and `source_language` is not `"auto"`, the app checks the detected language. If it doesn't match, it **first tries** translating as `source_language`; if that looks unhelpful it tries `"auto"` and only falls back when `"auto"` produces a more meaningful translation. When it falls back to `"auto"`, the event is **not written to the log**. |

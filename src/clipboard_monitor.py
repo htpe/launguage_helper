@@ -245,6 +245,9 @@ class ClipboardMonitor:
         self._hotkey_listener = None   # GlobalHotKeys (macOS/Linux) or thread (Windows)
         self._hotkey_str: str = ""
         self._hotkey_handle = None     # keyboard.add_hotkey handle (Windows only)
+        self._delete_hotkey_listener = None
+        self._delete_hotkey_handle = None
+        self._delete_hotkey_str: str = ""
         self._hotkey_watchdog_stop = threading.Event()
         self._hotkey_watchdog_thread: threading.Thread | None = None
         self._last_hotkey_ts = 0.0
@@ -309,13 +312,23 @@ class ClipboardMonitor:
                     except Exception:
                         pass
                 self._hotkey_handle = None
+                if _keyboard_win is not None and self._delete_hotkey_handle is not None:
+                    try:
+                        _keyboard_win.remove_hotkey(self._delete_hotkey_handle)
+                    except Exception:
+                        pass
+                self._delete_hotkey_handle = None
                 self._hotkey_str = ""
+                self._delete_hotkey_str = ""
                 if _keyboard_win is not None:
                     _keyboard_win.unhook_all_hotkeys()
             except Exception:
                 pass
         elif _HOTKEY_BACKEND == "pyobjc":
             self._stop_hotkey_listener()
+            if self._delete_hotkey_listener:
+                self._delete_hotkey_listener.stop()
+                self._delete_hotkey_listener = None
         else:
             self._stop_hotkey_listener()
         self._stop_mouse_listener()
@@ -374,6 +387,29 @@ class ClipboardMonitor:
         # Run synchronously so the console status prints immediately.
         self.toggle(source="hotkey")
 
+    def _on_delete_log_hotkey(self) -> None:
+        """Remove the most recent persisted translation when requested."""
+        now = time.monotonic()
+        if now < self._suppress_hotkey_until:
+            return
+        self._suppress_hotkey_until = now + 0.5
+
+        log_cfg = self._cfg.get("log_file", "log/translations.log")
+        if not log_cfg:
+            print("[monitor] Log deletion skipped because logging is disabled.", flush=True)
+            return
+
+        if getattr(sys, "frozen", False):
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        log_path = log_cfg if os.path.isabs(log_cfg) else os.path.join(base_dir, log_cfg)
+
+        if translation_log.remove_last_entry(log_path):
+            print(f"[monitor] Removed last translation log entry: {log_path}", flush=True)
+        else:
+            print("[monitor] No translation log entry to remove.", flush=True)
+
     def _register_hotkey(self, force: bool = False) -> None:
         """(Re)register the hotkey for the current config.
 
@@ -383,8 +419,9 @@ class ClipboardMonitor:
         """
         global _HOTKEY_BACKEND  # noqa: PLW0603
         hotkey = self._cfg.get("hotkey", "ctrl+alt+t")
+        delete_hotkey = self._cfg.get("delete_last_log_hotkey", "ctrl+alt+backspace")
 
-        if not force and hotkey == self._hotkey_str:
+        if not force and hotkey == self._hotkey_str and delete_hotkey == self._delete_hotkey_str:
             return
 
         if _HOTKEY_BACKEND == "keyboard":
@@ -400,6 +437,12 @@ class ClipboardMonitor:
                 except Exception:
                     pass
                 self._hotkey_handle = None
+            if self._delete_hotkey_handle is not None:
+                try:
+                    _keyboard_win.remove_hotkey(self._delete_hotkey_handle)
+                except Exception:
+                    pass
+                self._delete_hotkey_handle = None
 
             try:
                 self._hotkey_handle = _keyboard_win.add_hotkey(
@@ -408,7 +451,14 @@ class ClipboardMonitor:
                     suppress=False,
                     trigger_on_release=False,
                 )
+                self._delete_hotkey_handle = _keyboard_win.add_hotkey(
+                    delete_hotkey,
+                    self._on_delete_log_hotkey,
+                    suppress=False,
+                    trigger_on_release=False,
+                )
                 self._hotkey_str = hotkey
+                self._delete_hotkey_str = delete_hotkey
                 # Ignore any in-flight key events right after (re)registration.
                 self._suppress_hotkey_until = time.monotonic() + 0.5
             except Exception as exc:  # noqa: BLE001
@@ -419,10 +469,16 @@ class ClipboardMonitor:
         elif _HOTKEY_BACKEND == "pyobjc":
             # macOS via PyObjC AppKit
             self._stop_hotkey_listener()
+            if self._delete_hotkey_listener:
+                self._delete_hotkey_listener.stop()
+                self._delete_hotkey_listener = None
             try:
                 self._hotkey_listener = _MacOSHotkey(hotkey, self._on_hotkey)
                 self._hotkey_listener.start()
+                self._delete_hotkey_listener = _MacOSHotkey(delete_hotkey, self._on_delete_log_hotkey)
+                self._delete_hotkey_listener.start()
                 self._hotkey_str = hotkey
+                self._delete_hotkey_str = delete_hotkey
             except Exception as exc:  # noqa: BLE001
                 self._hotkey_str = ""
                 print(f"[monitor] Failed to register hotkey '{hotkey}' (PyObjC): {exc}", flush=True)
@@ -430,9 +486,14 @@ class ClipboardMonitor:
                 if _GlobalHotKeys:
                     try:
                         pynput_hotkey = _to_pynput_hotkey(hotkey)
-                        self._hotkey_listener = _GlobalHotKeys({pynput_hotkey: self._on_hotkey})
+                        delete_pynput_hotkey = _to_pynput_hotkey(delete_hotkey)
+                        self._hotkey_listener = _GlobalHotKeys({
+                            pynput_hotkey: self._on_hotkey,
+                            delete_pynput_hotkey: self._on_delete_log_hotkey,
+                        })
                         self._hotkey_listener.start()
                         self._hotkey_str = hotkey
+                        self._delete_hotkey_str = delete_hotkey
                         print(f"[monitor] Fell back to pynput for hotkey '{hotkey}'", flush=True)
                     except Exception as exc2:  # noqa: BLE001
                         print(f"[monitor] Pynput fallback also failed: {exc2}", flush=True)
@@ -442,9 +503,14 @@ class ClipboardMonitor:
             self._stop_hotkey_listener()
             try:
                 pynput_hotkey = _to_pynput_hotkey(hotkey)
-                self._hotkey_listener = _GlobalHotKeys({pynput_hotkey: self._on_hotkey})
+                delete_pynput_hotkey = _to_pynput_hotkey(delete_hotkey)
+                self._hotkey_listener = _GlobalHotKeys({
+                    pynput_hotkey: self._on_hotkey,
+                    delete_pynput_hotkey: self._on_delete_log_hotkey,
+                })
                 self._hotkey_listener.start()
                 self._hotkey_str = hotkey
+                self._delete_hotkey_str = delete_hotkey
             except Exception as exc:  # noqa: BLE001
                 self._hotkey_str = ""
                 print(f"[monitor] Failed to register hotkey '{hotkey}' via pynput: {exc}", flush=True)

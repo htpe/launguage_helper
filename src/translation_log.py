@@ -12,6 +12,7 @@ Format per entry
 """
 
 import os
+import re
 from datetime import datetime
 
 _DEFAULT_PATH = os.path.join(
@@ -90,6 +91,31 @@ def is_recent_duplicate(original: str, log_path: str, max_entries: int = 10) -> 
         recent = recent_originals(log_path, max_entries=max_entries)
         return original in recent
     except Exception:
+        return False
+
+
+def remove_last_entry(log_path: str) -> bool:
+    """Remove the last separated translation entry from *log_path*."""
+    try:
+        with open(log_path, "r", encoding="utf-8") as f:
+            text = f.read()
+
+        stripped = text.strip()
+        if not stripped:
+            return False
+
+        entries = [entry for entry in re.split(r"\r?\n\s*\r?\n", stripped) if entry.strip()]
+        if not entries:
+            return False
+
+        with open(log_path, "w", encoding="utf-8", newline="") as f:
+            if len(entries) > 1:
+                f.write("\n\n".join(entries[:-1]) + "\n\n")
+        return True
+    except FileNotFoundError:
+        return False
+    except Exception as exc:  # noqa: BLE001
+        print(f"[log] Could not remove last log entry: {exc}")
         return False
 
 

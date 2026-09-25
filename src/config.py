@@ -18,6 +18,7 @@ _DEFAULTS = {
     "source_language": "auto",
     "target_languages": ["fr", "es"],
     "hotkey": "ctrl+shift+t",
+    "delete_last_log_hotkey": "ctrl+alt+backspace",
     "tooltip_duration_ms": 4000,
     "max_chars": 500,
     "exclusive_source_language": False,
