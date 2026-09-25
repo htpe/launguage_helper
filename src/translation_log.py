@@ -19,6 +19,13 @@ _DEFAULT_PATH = os.path.join(
 )
 
 
+def _non_empty_lines(text: str) -> list[str]:
+    """Split text into lines and drop empty/whitespace-only ones."""
+    if not text:
+        return []
+    return [line.rstrip() for line in str(text).splitlines() if line.strip()]
+
+
 def _read_tail_text(log_path: str, max_bytes: int) -> str:
     if max_bytes <= 0:
         return ""
@@ -97,16 +104,34 @@ def log(
     try:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         targets_str = ", ".join(translations.keys())
+        original_lines = _non_empty_lines(original)
+        if not original_lines:
+            original_lines = [""]
         lines = [
             f"[{timestamp}]  ({source} → {targets_str})",
-            f"  Original : {original}",
+            f"  Original : {original_lines[0]}",
         ]
+        for continuation in original_lines[1:]:
+            lines.append(continuation)
+
         for lang, translated in translations.items():
-            lines.append(f"  {lang:<9}: {translated}")
+            translated_lines = _non_empty_lines(translated)
+            first_line = translated_lines[0] if translated_lines else ""
+            lines.append(f"  {lang:<9}: {first_line}")
+            for continuation in translated_lines[1:]:
+                lines.append(continuation)
+
         if examples:
             lines.append("  Examples :")
             for i, sentence in enumerate(examples, 1):
-                lines.append(f"    {i}. {sentence}")
+                sentence_lines = _non_empty_lines(sentence)
+                if sentence_lines:
+                    lines.append(f"    {i}. {sentence_lines[0]}")
+                    for continuation in sentence_lines[1:]:
+                        lines.append(f"       {continuation}")
+                else:
+                    lines.append(f"    {i}.")
+
         lines.append("")  # blank separator between entries
 
         with open(log_path, "a", encoding="utf-8") as f:

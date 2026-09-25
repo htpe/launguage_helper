@@ -153,3 +153,14 @@ launguage_helper/
 | `ModuleNotFoundError` | Run `pip install -r requirements.txt` inside your virtual environment. |
 | Hotkey conflicts | Change `hotkey` in your active config file (`config.windows.json` / `config.macos.json`, fallback `config.json`) to a combination not used by other apps. |
 | Translation errors | Check your internet connection — Google Translate requires network access. |
+
+
+## generate executable
+Install the requirements in the active virtual environment first, then run:
+
+```powershell
+python -m pip install -r requirements.txt
+python -m PyInstaller --noconfirm --clean --onefile --noconsole --name LanguageHelper --add-data "config.json;." --add-data "config.windows.json;." --add-data "config.macos.json;." main.py
+```
+
+The standalone no-console executable is written to `dist/LanguageHelper.exe`.
