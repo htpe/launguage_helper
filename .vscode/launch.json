@@ -2,6 +2,16 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "learning gui",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/learning_gui.py",
+      "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    },
+    {
       "name": "Run Language Helper",
       "type": "debugpy",
       "request": "launch",
